@@ -42,6 +42,7 @@ jobs:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
             type=raw,value=latest
+            type=raw,value=stable-trixie
             type=raw,value={{date 'YYYYMMDD'}}
             type=sha,prefix=
 
@@ -54,6 +55,6 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
             ENABLED_MODULES=brotli
-            NGINX_FROM_IMAGE=nginx:mainline-trixie
+            NGINX_FROM_IMAGE=nginx:stable-trixie
           cache-from: type=gha
           cache-to: type=gha,mode=max
