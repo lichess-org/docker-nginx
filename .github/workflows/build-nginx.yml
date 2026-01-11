@@ -76,18 +76,30 @@ jobs:
           retention-days: 90
 
   build-brotli:
+    needs: build
     runs-on: ubuntu-latest
     container:
       image: debian:trixie
       options: --privileged
 
     steps:
+      - name: Download nginx-dev from build job
+        uses: actions/download-artifact@v4
+        with:
+          name: nginx-${{ needs.build.outputs.backport_version }}
+          path: /nginx-debs
+
       - name: Install build dependencies
         run: |
           apt-get update
           apt-get install -y --no-install-recommends \
             devscripts dpkg-dev build-essential fakeroot debhelper \
             curl ca-certificates gnupg
+
+      - name: Install backported nginx-dev
+        run: |
+          dpkg -i /nginx-debs/nginx-common_*.deb /nginx-debs/nginx-dev_*.deb || true
+          apt-get install -f -y
 
       - name: Add sid source repository
         run: |
