@@ -11,7 +11,7 @@ on:
     - cron: '0 2 * * 0'
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
@@ -19,6 +19,9 @@ jobs:
     container:
       image: debian:trixie
       options: --privileged
+    outputs:
+      nginx_version: ${{ steps.version.outputs.nginx_version }}
+      backport_version: ${{ steps.version.outputs.backport_version }}
 
     steps:
       - name: Install build dependencies
@@ -111,3 +114,34 @@ jobs:
           name: nginx-brotli-modules
           path: /build/*.deb
           retention-days: 90
+
+  create-release:
+    needs: [build, build-brotli]
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download nginx artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: nginx-${{ needs.build.outputs.backport_version }}
+          path: ./debs
+
+      - name: Download brotli artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: nginx-brotli-modules
+          path: ./debs
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ needs.build.outputs.nginx_version }}
+          name: nginx ${{ needs.build.outputs.nginx_version }} for Trixie
+          body: |
+            Backported nginx ${{ needs.build.outputs.nginx_version }} from Debian sid for Trixie.
+
+            Includes:
+            - nginx-common and nginx-core packages
+            - libnginx-mod-http-brotli-filter and libnginx-mod-http-brotli-static modules
+          files: ./debs/*.deb
+          make_latest: true
