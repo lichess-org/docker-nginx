@@ -110,7 +110,9 @@ jobs:
         run: |
           mkdir -p /build && cd /build
           apt-get source libnginx-mod-http-brotli-filter
-          apt-get build-dep -y libnginx-mod-http-brotli-filter
+
+          # Install build deps except nginx (we have backported nginx-dev)
+          apt-get install -y libbrotli-dev
 
           BROTLI_DIR=$(find . -maxdepth 1 -type d -name "libnginx-mod-http-brotli*" -o -name "ngx-brotli*" | head -1)
           cd "$BROTLI_DIR"
