@@ -63,55 +63,20 @@ jobs:
           DEBEMAIL="nginx-backport@localhost" DEBFULLNAME="nginx Backport Bot" \
             dch --bpo "Backport to trixie for SRV record support"
 
-      - name: Build packages
+      - name: Build nginx packages
         run: |
           cd /build/$NGINX_DIR
           DEB_BUILD_OPTIONS="nocheck parallel=2" dpkg-buildpackage -us -uc -b
 
-      - name: Upload nginx packages
-        uses: actions/upload-artifact@v4
-        with:
-          name: nginx-${{ steps.version.outputs.backport_version }}
-          path: /build/*.deb
-          retention-days: 90
-
-  build-brotli:
-    needs: build
-    runs-on: ubuntu-latest
-    container:
-      image: debian:trixie
-      options: --privileged
-
-    steps:
-      - name: Download nginx-dev from build job
-        uses: actions/download-artifact@v4
-        with:
-          name: nginx-${{ needs.build.outputs.backport_version }}
-          path: /nginx-debs
-
-      - name: Install build dependencies
+      - name: Install backported nginx-dev for brotli build
         run: |
-          apt-get update
-          apt-get install -y --no-install-recommends \
-            devscripts dpkg-dev build-essential fakeroot debhelper \
-            curl ca-certificates gnupg
-
-      - name: Install backported nginx-dev
-        run: |
-          dpkg -i /nginx-debs/nginx-common_*.deb /nginx-debs/nginx-dev_*.deb || true
+          dpkg -i /build/nginx-common_*.deb /build/nginx-dev_*.deb || true
           apt-get install -f -y
-
-      - name: Add sid source repository
-        run: |
-          echo "deb-src http://deb.debian.org/debian/ sid main" > /etc/apt/sources.list.d/sid-src.list
-          apt-get update
 
       - name: Build brotli modules
         run: |
-          mkdir -p /build && cd /build
+          mkdir -p /build/brotli && cd /build/brotli
           apt-get source libnginx-mod-http-brotli-filter
-
-          # Install build deps except nginx (we have backported nginx-dev)
           apt-get install -y libbrotli-dev
 
           BROTLI_DIR=$(find . -maxdepth 1 -type d -name "libnginx-mod-http-brotli*" -o -name "ngx-brotli*" | head -1)
@@ -122,28 +87,29 @@ jobs:
 
           DEB_BUILD_OPTIONS="nocheck parallel=2" dpkg-buildpackage -us -uc -b
 
-      - name: Upload brotli packages
+      - name: Collect all debs
+        run: |
+          mkdir -p /debs
+          cp /build/*.deb /debs/ || true
+          cp /build/brotli/*.deb /debs/ || true
+          ls -la /debs/
+
+      - name: Upload packages
         uses: actions/upload-artifact@v4
         with:
-          name: nginx-brotli-modules
-          path: /build/*.deb
+          name: nginx-${{ steps.version.outputs.backport_version }}
+          path: /debs/*.deb
           retention-days: 90
 
   create-release:
-    needs: [build, build-brotli]
+    needs: build
     runs-on: ubuntu-latest
 
     steps:
-      - name: Download nginx artifacts
+      - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
           name: nginx-${{ needs.build.outputs.backport_version }}
-          path: ./debs
-
-      - name: Download brotli artifacts
-        uses: actions/download-artifact@v4
-        with:
-          name: nginx-brotli-modules
           path: ./debs
 
       - name: Create Release
