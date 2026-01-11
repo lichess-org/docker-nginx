@@ -1,0 +1,113 @@
+name: Build nginx Backport for Trixie
+
+on:
+  workflow_dispatch:
+    inputs:
+      nginx_version:
+        description: 'nginx version from sid (e.g., 1.28.0-6). Leave blank for latest.'
+        required: false
+        default: ''
+  schedule:
+    - cron: '0 2 * * 0'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container:
+      image: debian:trixie
+      options: --privileged
+
+    steps:
+      - name: Install build dependencies
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            devscripts dpkg-dev build-essential fakeroot debhelper \
+            curl ca-certificates gnupg lsb-release
+
+      - name: Add sid source repository
+        run: |
+          echo "deb-src http://deb.debian.org/debian/ sid main" > /etc/apt/sources.list.d/sid-src.list
+          apt-get update
+
+      - name: Determine nginx version
+        id: version
+        run: |
+          if [ -n "${{ github.event.inputs.nginx_version }}" ]; then
+            VERSION="${{ github.event.inputs.nginx_version }}"
+          else
+            VERSION=$(apt-cache showsrc nginx 2>/dev/null | grep -m1 "^Version:" | cut -d' ' -f2)
+          fi
+          echo "nginx_version=$VERSION" >> $GITHUB_OUTPUT
+          echo "backport_version=${VERSION}~bpo13+1" >> $GITHUB_OUTPUT
+
+      - name: Download nginx source from sid
+        run: |
+          mkdir -p /build && cd /build
+          apt-get source nginx=${{ steps.version.outputs.nginx_version }}
+          NGINX_DIR=$(find . -maxdepth 1 -type d -name "nginx-*" | head -1)
+          echo "NGINX_DIR=$NGINX_DIR" >> $GITHUB_ENV
+
+      - name: Install nginx build dependencies
+        run: apt-get build-dep -y nginx
+
+      - name: Update changelog for backport
+        run: |
+          cd /build/$NGINX_DIR
+          DEBEMAIL="nginx-backport@localhost" DEBFULLNAME="nginx Backport Bot" \
+            dch --bpo "Backport to trixie for SRV record support"
+
+      - name: Build packages
+        run: |
+          cd /build/$NGINX_DIR
+          DEB_BUILD_OPTIONS="nocheck parallel=2" dpkg-buildpackage -us -uc -b
+
+      - name: Upload nginx packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: nginx-${{ steps.version.outputs.backport_version }}
+          path: /build/*.deb
+          retention-days: 90
+
+  build-brotli:
+    runs-on: ubuntu-latest
+    container:
+      image: debian:trixie
+      options: --privileged
+
+    steps:
+      - name: Install build dependencies
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            devscripts dpkg-dev build-essential fakeroot debhelper \
+            curl ca-certificates gnupg
+
+      - name: Add sid source repository
+        run: |
+          echo "deb-src http://deb.debian.org/debian/ sid main" > /etc/apt/sources.list.d/sid-src.list
+          apt-get update
+
+      - name: Build brotli modules
+        run: |
+          mkdir -p /build && cd /build
+          apt-get source libnginx-mod-brotli
+          apt-get build-dep -y libnginx-mod-brotli
+
+          BROTLI_DIR=$(find . -maxdepth 1 -type d -name "libnginx-mod-brotli-*" | head -1)
+          cd "$BROTLI_DIR"
+
+          DEBEMAIL="nginx-backport@localhost" DEBFULLNAME="nginx Backport Bot" \
+            dch --bpo "Backport brotli module to trixie"
+
+          DEB_BUILD_OPTIONS="nocheck parallel=2" dpkg-buildpackage -us -uc -b
+
+      - name: Upload brotli packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: nginx-brotli-modules
+          path: /build/*.deb
+          retention-days: 90
