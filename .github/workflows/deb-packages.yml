@@ -129,6 +129,12 @@ jobs:
           name: nginx-${{ needs.build.outputs.backport_version }}
           path: ./debs
 
+      - name: Delete existing release
+        run: gh release delete "v${{ needs.build.outputs.nginx_version }}" --yes --cleanup-tag || true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
