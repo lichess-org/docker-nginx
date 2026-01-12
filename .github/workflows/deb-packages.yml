@@ -71,10 +71,7 @@ jobs:
       - name: Install backported nginx-dev for brotli build
         run: |
           apt-get install -y libbrotli-dev
-          dpkg -i /build/nginx-common_*.deb /build/nginx-dev_*.deb || true
-          apt-get install -f -y
-          dpkg -l | grep nginx
-          ls -la /usr/share/perl5/Debian/Debhelper/Sequence/ || true
+          apt-get install -y /build/nginx-common_*.deb /build/nginx-core_*.deb /build/nginx_*.deb /build/nginx-dev_*.deb
 
       - name: Build brotli modules
         run: |
