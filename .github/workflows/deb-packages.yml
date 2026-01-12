@@ -22,6 +22,7 @@ jobs:
     outputs:
       nginx_version: ${{ steps.version.outputs.nginx_version }}
       backport_version: ${{ steps.version.outputs.backport_version }}
+      release_tag: ${{ steps.version.outputs.release_tag }}
 
     steps:
       - name: Install build dependencies
@@ -44,8 +45,10 @@ jobs:
           else
             VERSION=$(apt-cache showsrc nginx 2>/dev/null | grep -m1 "^Version:" | cut -d' ' -f2)
           fi
+          BUILD_DATE=$(date +%Y%m%d)
           echo "nginx_version=$VERSION" >> $GITHUB_OUTPUT
           echo "backport_version=${VERSION}~bpo13+1" >> $GITHUB_OUTPUT
+          echo "release_tag=v${VERSION}-${BUILD_DATE}" >> $GITHUB_OUTPUT
 
       - name: Download nginx source from sid
         run: |
@@ -129,17 +132,11 @@ jobs:
           name: nginx-${{ needs.build.outputs.backport_version }}
           path: ./debs
 
-      - name: Delete existing release
-        run: gh release delete "v${{ needs.build.outputs.nginx_version }}" --yes --cleanup-tag || true
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v${{ needs.build.outputs.nginx_version }}
-          name: nginx ${{ needs.build.outputs.nginx_version }} for Trixie
+          tag_name: ${{ needs.build.outputs.release_tag }}
+          name: nginx ${{ needs.build.outputs.nginx_version }} (${{ needs.build.outputs.release_tag }})
           body: |
             Backported nginx ${{ needs.build.outputs.nginx_version }} from Debian sid for Trixie.
 
