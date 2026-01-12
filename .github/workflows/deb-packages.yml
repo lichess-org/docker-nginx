@@ -70,8 +70,9 @@ jobs:
 
       - name: Install backported nginx-dev for brotli build
         run: |
-          apt-get install -y libbrotli-dev libgd3 libgeoip1 libxslt1.1
-          apt-get install -y /build/*.deb
+          apt-get install -y libbrotli-dev
+          # Force install just nginx-common and nginx-dev (only need headers for building)
+          dpkg --force-depends -i /build/nginx-common_*.deb /build/nginx-dev_*.deb
 
       - name: Build brotli modules
         run: |
@@ -84,13 +85,29 @@ jobs:
           DEBEMAIL="nginx-backport@localhost" DEBFULLNAME="nginx Backport Bot" \
             dch --bpo "Backport brotli module to trixie"
 
-          DEB_BUILD_OPTIONS="nocheck parallel=2" dpkg-buildpackage -us -uc -b
+          # -d skips dependency check (dh-sequence-nginx not registered via dpkg --force-depends)
+          DEB_BUILD_OPTIONS="nocheck parallel=2" dpkg-buildpackage -us -uc -b -d
+
+      - name: Build geoip2 modules
+        run: |
+          apt-get install -y libmaxminddb-dev
+          mkdir -p /build/geoip2 && cd /build/geoip2
+          apt-get source libnginx-mod-http-geoip2
+
+          GEOIP2_DIR=$(find . -maxdepth 1 -type d -name "libnginx-mod-http-geoip2*" -o -name "ngx-http-geoip2*" | head -1)
+          cd "$GEOIP2_DIR"
+
+          DEBEMAIL="nginx-backport@localhost" DEBFULLNAME="nginx Backport Bot" \
+            dch --bpo "Backport geoip2 module to trixie"
+
+          DEB_BUILD_OPTIONS="nocheck parallel=2" dpkg-buildpackage -us -uc -b -d
 
       - name: Collect all debs
         run: |
           mkdir -p /debs
           cp /build/*.deb /debs/ || true
           cp /build/brotli/*.deb /debs/ || true
+          cp /build/geoip2/*.deb /debs/ || true
           ls -la /debs/
 
       - name: Upload packages
@@ -120,7 +137,8 @@ jobs:
             Backported nginx ${{ needs.build.outputs.nginx_version }} from Debian sid for Trixie.
 
             Includes:
-            - nginx-common and nginx-core packages
-            - libnginx-mod-http-brotli-filter and libnginx-mod-http-brotli-static modules
+            - nginx-common, nginx-core, and all standard nginx module packages
+            - libnginx-mod-http-brotli-filter and libnginx-mod-http-brotli-static
+            - libnginx-mod-http-geoip2 and libnginx-mod-stream-geoip2
           files: ./debs/*.deb
           make_latest: true
