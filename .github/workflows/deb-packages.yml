@@ -1,4 +1,4 @@
-name: Build nginx Backport for Trixie
+name: Debian Packages
 
 on:
   workflow_dispatch:

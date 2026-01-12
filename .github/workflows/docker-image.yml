@@ -1,4 +1,4 @@
-name: Build NGINX with Brotli
+name: Docker Image
 
 on:
   push:
