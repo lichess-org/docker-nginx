@@ -68,11 +68,14 @@ jobs:
           cd /build/$NGINX_DIR
           DEB_BUILD_OPTIONS="nocheck parallel=2" dpkg-buildpackage -us -uc -b
 
-      - name: Install backported nginx-dev for brotli build
+      - name: Install backported nginx for module builds
         run: |
-          apt-get install -y libbrotli-dev
-          # Force install just nginx-common and nginx-dev (only need headers for building)
-          dpkg --force-depends -i /build/nginx-common_*.deb /build/nginx-dev_*.deb
+          # Install runtime deps first
+          apt-get install -y libbrotli-dev libmaxminddb-dev
+          # Install ALL our backported nginx debs (satisfies internal dependencies)
+          dpkg -i /build/*.deb || true
+          # Fix any remaining deps from trixie repos
+          apt-get install -f -y
 
       - name: Build brotli modules
         run: |
@@ -85,12 +88,10 @@ jobs:
           DEBEMAIL="nginx-backport@localhost" DEBFULLNAME="nginx Backport Bot" \
             dch --bpo "Backport brotli module to trixie"
 
-          # -d skips dependency check (dh-sequence-nginx not registered via dpkg --force-depends)
           DEB_BUILD_OPTIONS="nocheck parallel=2" dpkg-buildpackage -us -uc -b -d
 
       - name: Build geoip2 modules
         run: |
-          apt-get install -y libmaxminddb-dev
           mkdir -p /build/geoip2 && cd /build/geoip2
           apt-get source libnginx-mod-http-geoip2
 
