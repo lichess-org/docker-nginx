@@ -70,8 +70,8 @@ jobs:
 
       - name: Install backported nginx-dev for brotli build
         run: |
-          apt-get install -y libbrotli-dev
-          apt-get install -y /build/nginx-common_*.deb /build/nginx-core_*.deb /build/nginx_*.deb /build/nginx-dev_*.deb
+          apt-get install -y libbrotli-dev libgd3 libgeoip1 libxslt1.1
+          apt-get install -y /build/*.deb
 
       - name: Build brotli modules
         run: |
