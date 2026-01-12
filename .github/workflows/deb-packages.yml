@@ -77,7 +77,7 @@ jobs:
         run: |
           mkdir -p /build/brotli && cd /build/brotli
           apt-get source libnginx-mod-http-brotli-filter
-          apt-get install -y libbrotli-dev
+          apt-get install -y libbrotli-dev dh-nginx
 
           BROTLI_DIR=$(find . -maxdepth 1 -type d -name "libnginx-mod-http-brotli*" -o -name "ngx-brotli*" | head -1)
           cd "$BROTLI_DIR"
