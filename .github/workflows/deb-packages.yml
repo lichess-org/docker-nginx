@@ -3,26 +3,64 @@ name: Debian Packages
 on:
   workflow_dispatch:
     inputs:
-      nginx_version:
-        description: 'nginx version from sid (e.g., 1.28.0-6). Leave blank for latest.'
-        required: false
-        default: ''
+      force_build:
+        description: 'Force build even if version unchanged'
+        type: boolean
+        default: false
+      skip_upload:
+        description: 'Skip upload (for testing build only)'
+        type: boolean
+        default: false
+      version_check_url:
+        description: 'URL to check current version (default: https://deb.lichess.ovh/VERSION)'
+        type: string
+        default: 'https://deb.lichess.ovh/VERSION'
   schedule:
-    - cron: '0 2 * * 0'
-
-permissions:
-  contents: write
+    - cron: '0 2 * * *'  # Nightly at 2 AM UTC
 
 jobs:
+  check-version:
+    runs-on: ubuntu-latest
+    outputs:
+      should_build: ${{ steps.check.outputs.should_build }}
+      nginx_version: ${{ steps.check.outputs.nginx_version }}
+      backport_version: ${{ steps.check.outputs.backport_version }}
+    steps:
+      - name: Get upstream and current versions
+        id: check
+        run: |
+          # Get latest nginx version from sid using docker
+          UPSTREAM=$(docker run --rm debian:trixie bash -c "
+            apt-get update -qq >/dev/null 2>&1
+            echo 'deb-src http://deb.debian.org/debian sid main' > /etc/apt/sources.list.d/sid.list
+            apt-get update -qq >/dev/null 2>&1
+            apt-cache showsrc nginx 2>/dev/null | grep -m1 '^Version:' | cut -d' ' -f2
+          ")
+
+          # Get current version from repo
+          VERSION_URL="${{ inputs.version_check_url || 'https://deb.lichess.ovh/VERSION' }}"
+          CURRENT=$(curl -sf "$VERSION_URL" || echo "none")
+
+          echo "Upstream: $UPSTREAM"
+          echo "Current: $CURRENT"
+          echo "nginx_version=$UPSTREAM" >> $GITHUB_OUTPUT
+          echo "backport_version=${UPSTREAM}~bpo13+1" >> $GITHUB_OUTPUT
+
+          if [ "$UPSTREAM" != "$CURRENT" ] || [ "${{ inputs.force_build }}" = "true" ]; then
+            echo "should_build=true" >> $GITHUB_OUTPUT
+            echo "Build needed: version changed or forced"
+          else
+            echo "should_build=false" >> $GITHUB_OUTPUT
+            echo "Build skipped: version unchanged"
+          fi
+
   build:
+    needs: check-version
+    if: needs.check-version.outputs.should_build == 'true'
     runs-on: ubuntu-latest
     container:
       image: debian:trixie
       options: --privileged
-    outputs:
-      nginx_version: ${{ steps.version.outputs.nginx_version }}
-      backport_version: ${{ steps.version.outputs.backport_version }}
-      release_tag: ${{ steps.version.outputs.release_tag }}
 
     steps:
       - name: Install build dependencies
@@ -37,23 +75,10 @@ jobs:
           echo "deb-src http://deb.debian.org/debian/ sid main" > /etc/apt/sources.list.d/sid-src.list
           apt-get update
 
-      - name: Determine nginx version
-        id: version
-        run: |
-          if [ -n "${{ github.event.inputs.nginx_version }}" ]; then
-            VERSION="${{ github.event.inputs.nginx_version }}"
-          else
-            VERSION=$(apt-cache showsrc nginx 2>/dev/null | grep -m1 "^Version:" | cut -d' ' -f2)
-          fi
-          BUILD_DATE=$(date +%Y%m%d)
-          echo "nginx_version=$VERSION" >> $GITHUB_OUTPUT
-          echo "backport_version=${VERSION}~bpo13+1" >> $GITHUB_OUTPUT
-          echo "release_tag=v${VERSION}-${BUILD_DATE}" >> $GITHUB_OUTPUT
-
       - name: Download nginx source from sid
         run: |
           mkdir -p /build && cd /build
-          apt-get source nginx=${{ steps.version.outputs.nginx_version }}
+          apt-get source nginx=${{ needs.check-version.outputs.nginx_version }}
           NGINX_DIR=$(find . -maxdepth 1 -type d -name "nginx-*" | head -1)
           echo "NGINX_DIR=$NGINX_DIR" >> $GITHUB_ENV
 
@@ -73,11 +98,8 @@ jobs:
 
       - name: Install backported nginx for module builds
         run: |
-          # Install runtime deps first
           apt-get install -y libbrotli-dev libmaxminddb-dev
-          # Install ALL our backported nginx debs (satisfies internal dependencies)
           dpkg -i /build/*.deb || true
-          # Fix any remaining deps from trixie repos
           apt-get install -f -y
 
       - name: Build brotli modules
@@ -117,32 +139,54 @@ jobs:
       - name: Upload packages
         uses: actions/upload-artifact@v4
         with:
-          name: nginx-${{ steps.version.outputs.backport_version }}
+          name: nginx-${{ needs.check-version.outputs.backport_version }}
           path: /debs/*.deb
-          retention-days: 90
+          retention-days: 30
 
-  create-release:
-    needs: build
+  publish-repo:
+    needs: [check-version, build]
+    if: needs.check-version.outputs.should_build == 'true'
     runs-on: ubuntu-latest
-
     steps:
       - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
-          name: nginx-${{ needs.build.outputs.backport_version }}
+          name: nginx-${{ needs.check-version.outputs.backport_version }}
           path: ./debs
 
-      - name: Create Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ needs.build.outputs.release_tag }}
-          name: nginx ${{ needs.build.outputs.nginx_version }} (${{ needs.build.outputs.release_tag }})
-          body: |
-            Backported nginx ${{ needs.build.outputs.nginx_version }} from Debian sid for Trixie.
+      - name: Install apt-utils
+        run: sudo apt-get update && sudo apt-get install -y apt-utils
 
-            Includes:
-            - nginx-common, nginx-core, and all standard nginx module packages
-            - libnginx-mod-http-brotli-filter and libnginx-mod-http-brotli-static
-            - libnginx-mod-http-geoip2 and libnginx-mod-stream-geoip2
-          files: ./debs/*.deb
-          make_latest: true
+      - name: Generate repository structure
+        run: |
+          mkdir -p repo/pool/main/n/nginx
+          mkdir -p repo/dists/trixie/main/binary-amd64
+
+          # Copy debs to pool, excluding dbgsym
+          for f in debs/*.deb; do
+            [[ "$f" == *dbgsym* ]] && continue
+            cp "$f" repo/pool/main/n/nginx/
+          done
+
+          # Generate Packages file
+          cd repo
+          apt-ftparchive packages pool > dists/trixie/main/binary-amd64/Packages
+          gzip -k dists/trixie/main/binary-amd64/Packages
+
+          # Generate Release file
+          apt-ftparchive release dists/trixie > dists/trixie/Release
+
+          # Write version marker
+          echo "${{ needs.check-version.outputs.nginx_version }}" > VERSION
+
+          echo "Repository contents:"
+          find . -type f
+
+      - name: Upload to deb server
+        if: ${{ inputs.skip_upload != true }}
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.DEB_SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H ${{ secrets.DEB_SSH_HOST }} >> ~/.ssh/known_hosts 2>/dev/null
+          rsync -avz --delete repo/ ${{ secrets.DEB_SSH_USER }}@${{ secrets.DEB_SSH_HOST }}:${{ secrets.DEB_SSH_PATH || '/var/www/deb/' }}
